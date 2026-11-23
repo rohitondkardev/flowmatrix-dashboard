@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+
 import ProjectsManager from "@/components/ProjectsManager";
 import LeadsManager from "@/components/LeadsManager";
 import ApprovalsManager from "@/components/ApprovalsManager";
 import NotificationsManager from "@/components/NotificationsManager";
 import ReportsManager from "@/components/ReportsManager";
 import TeamManager from "@/components/TeamManager";
+import SettingsManager from "@/components/SettingsManager";
 
 type ClientStatus = "Active" | "Pending" | "Inactive";
 
@@ -891,32 +893,9 @@ export default function Home() {
 
         {active === "Team" && <TeamManager />}
 
-        {/* OTHER MODULES */}
+        {/* SETTINGS MODULE */}
 
-        {![
-          "Overview",
-          "Clients",
-          "Projects",
-          "Leads",
-          "Approvals",
-          "Notifications",
-          "Reports",
-          "Team",
-        ].includes(active) && (
-
-          <section className="rounded-xl border bg-white p-8 shadow-sm">
-
-            <h3 className="text-xl font-bold">
-              {active} Management
-            </h3>
-
-            <p className="mt-3 text-sm text-gray-500">
-              This module is planned for the next development phase.
-            </p>
-
-          </section>
-
-        )}
+        {active === "Settings" && <SettingsManager />}
 
         {/* FOOTER */}
 
