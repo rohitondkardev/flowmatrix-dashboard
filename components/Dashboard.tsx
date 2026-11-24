@@ -22,6 +22,7 @@ type Client = {
   project: string;
   projectId: string | null;
   status: ClientStatus;
+  archivedAt: string | null;
 };
 
 type ClientForm = {
@@ -68,14 +69,18 @@ export default function Home() {
   const [clients, setClients] = useState<Client[]>([]);
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<ClientForm>(emptyForm);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
 
   const [isWorkspaceAdmin, setIsWorkspaceAdmin] = useState(false);
+  const [isWorkspaceOwner, setIsWorkspaceOwner] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
 
   // LOGOUT
@@ -119,22 +124,33 @@ export default function Home() {
 
       if (!user) {
         setIsWorkspaceAdmin(false);
+        setIsWorkspaceOwner(false);
         return;
       }
 
-      const { data, error: roleError } = await supabase.rpc(
-        "is_workspace_admin",
-        {
+      const { data: adminData, error: adminError } =
+        await supabase.rpc("is_workspace_admin", {
           check_workspace_id: WORKSPACE_ID,
-        }
-      );
+        });
 
-      if (roleError) throw roleError;
+      if (adminError) throw adminError;
 
-      setIsWorkspaceAdmin(data === true);
+      const { data: ownerData, error: ownerError } =
+        await supabase.rpc("is_workspace_owner", {
+          check_workspace_id: WORKSPACE_ID,
+        });
+
+      if (ownerError) throw ownerError;
+
+      setIsWorkspaceAdmin(adminData === true);
+      setIsWorkspaceOwner(ownerData === true);
+
     } catch (err) {
       console.error("Role loading error:", err);
+
       setIsWorkspaceAdmin(false);
+      setIsWorkspaceOwner(false);
+
     } finally {
       setRoleLoading(false);
     }
@@ -149,7 +165,7 @@ export default function Home() {
     try {
       const { data: clientData, error: clientError } = await supabase
         .from("clients")
-        .select("id, name, email, status")
+        .select("id, name, email, status, archived_at")
         .eq("workspace_id", WORKSPACE_ID)
         .order("created_at", { ascending: false });
 
@@ -186,6 +202,7 @@ export default function Home() {
           project: project?.name || "",
           projectId: project?.id || null,
           status: formatStatus(client.status),
+          archivedAt: client.archived_at,
         };
       });
 
@@ -237,7 +254,8 @@ export default function Home() {
           .from("clients")
           .update(clientPayload)
           .eq("id", editId)
-          .eq("workspace_id", WORKSPACE_ID);
+          .eq("workspace_id", WORKSPACE_ID)
+          .is("archived_at", null);
 
         if (updateError) throw updateError;
       } else {
@@ -297,11 +315,16 @@ export default function Home() {
     } catch (err) {
       console.error("Save client error:", err);
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to save client."
-      );
+      const saveError = err as {
+        code?: string;
+        message?: string;
+      };
+
+      if (saveError.code === "23505") {
+        setError("This email already exists in this workspace.");
+      } else {
+        setError(saveError.message || "Unable to save client.");
+      }
     } finally {
       setSaving(false);
     }
@@ -310,7 +333,7 @@ export default function Home() {
   // ADD CLIENT
 
   function addClient() {
-    if (!isWorkspaceAdmin) return;
+    if (!isWorkspaceAdmin || showArchived) return;
 
     setEditId(null);
     setForm(emptyForm);
@@ -321,7 +344,7 @@ export default function Home() {
   // EDIT CLIENT
 
   function editClient(client: Client) {
-    if (!isWorkspaceAdmin) return;
+    if (!isWorkspaceAdmin || client.archivedAt) return;
 
     setEditId(client.id);
 
@@ -345,16 +368,16 @@ export default function Home() {
     setError("");
   }
 
-  // DELETE CLIENT
+  // ARCHIVE CLIENT
 
-  async function deleteClient(id: string) {
+  async function archiveClient(client: Client) {
     if (!isWorkspaceAdmin) {
-      setError("You do not have permission to delete clients.");
+      setError("You do not have permission to archive clients.");
       return;
     }
 
     const confirmed = window.confirm(
-      "Are you sure you want to delete this client?"
+      `Archive "${client.name}"?\n\nThe client and its related records will remain in your workspace. You can restore this client later.`
     );
 
     if (!confirmed) return;
@@ -362,31 +385,106 @@ export default function Home() {
     setError("");
 
     try {
-      const { error: deleteError } = await supabase
+      const { data, error: archiveError } = await supabase
         .from("clients")
-        .delete()
-        .eq("id", id)
-        .eq("workspace_id", WORKSPACE_ID);
+        .update({
+          archived_at: new Date().toISOString(),
+        })
+        .eq("id", client.id)
+        .eq("workspace_id", WORKSPACE_ID)
+        .is("archived_at", null)
+        .select("id");
 
-      if (deleteError) throw deleteError;
+      if (archiveError) throw archiveError;
+
+      if (!data || data.length === 0) {
+        throw new Error(
+          "Client was not archived. Please refresh and try again."
+        );
+      }
 
       setClients((previous) =>
-        previous.filter((client) => client.id !== id)
+        previous.map((item) =>
+          item.id === client.id
+            ? { ...item, archivedAt: new Date().toISOString() }
+            : item
+        )
       );
+
+      closeForm();
     } catch (err) {
-      console.error("Delete client error:", err);
+      console.error("Archive client error:", err);
 
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to delete client."
+          : "Unable to archive client."
       );
     }
   }
 
-  // SEARCH CLIENTS
+  // RESTORE CLIENT
 
-  const filteredClients = clients.filter((client) => {
+  async function restoreClient(client: Client) {
+    if (!isWorkspaceAdmin) {
+      setError("You do not have permission to restore clients.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Restore "${client.name}"?\n\nThis client will appear again in your active Clients list.`
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+
+    try {
+      const { data, error: restoreError } = await supabase
+        .from("clients")
+        .update({
+          archived_at: null,
+        })
+        .eq("id", client.id)
+        .eq("workspace_id", WORKSPACE_ID)
+        .not("archived_at", "is", null)
+        .select("id");
+
+      if (restoreError) throw restoreError;
+
+      if (!data || data.length === 0) {
+        throw new Error(
+          "Client was not restored. Please refresh and try again."
+        );
+      }
+
+      setClients((previous) =>
+        previous.map((item) =>
+          item.id === client.id
+            ? { ...item, archivedAt: null }
+            : item
+        )
+      );
+    } catch (err) {
+      console.error("Restore client error:", err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to restore client."
+      );
+    }
+  }
+
+  // SEARCH AND FILTER CLIENTS
+
+  const visibleClients = clients.filter((client) =>
+    showArchived
+      ? client.archivedAt !== null
+      : client.archivedAt === null
+  );
+
+  const filteredClients = visibleClients.filter((client) => {
     const text = [
       client.name,
       client.email,
@@ -401,16 +499,24 @@ export default function Home() {
 
   // CLIENT STATISTICS
 
-  const activeClients = clients.filter(
+  const normalClients = clients.filter(
+    (client) => client.archivedAt === null
+  );
+
+  const activeClients = normalClients.filter(
     (client) => client.status === "Active"
   ).length;
 
-  const pendingClients = clients.filter(
+  const pendingClients = normalClients.filter(
     (client) => client.status === "Pending"
   ).length;
 
-  const inactiveClients = clients.filter(
+  const inactiveClients = normalClients.filter(
     (client) => client.status === "Inactive"
+  ).length;
+
+  const archivedClients = clients.filter(
+    (client) => client.archivedAt !== null
   ).length;
 
   return (
@@ -468,6 +574,8 @@ export default function Home() {
               <p className="text-sm font-medium">
                 {roleLoading
                   ? "Loading..."
+                  : isWorkspaceOwner
+                  ? "Owner"
                   : isWorkspaceAdmin
                   ? "Admin"
                   : "Member"}
@@ -476,6 +584,8 @@ export default function Home() {
               <p className="text-xs text-gray-400">
                 {roleLoading
                   ? "Checking role..."
+                  : isWorkspaceOwner
+                  ? "Workspace Owner"
                   : isWorkspaceAdmin
                   ? "Workspace Administrator"
                   : "Workspace Member"}
@@ -483,8 +593,6 @@ export default function Home() {
             </div>
 
           </div>
-
-          {/* LOGOUT */}
 
           <button
             type="button"
@@ -542,7 +650,7 @@ export default function Home() {
               {[
                 {
                   title: "Total Clients",
-                  value: clients.length,
+                  value: normalClients.length,
                 },
                 {
                   title: "Active Clients",
@@ -587,8 +695,15 @@ export default function Home() {
                 Your business management workspace is ready.
               </p>
 
+              <p className="mt-3 text-sm text-gray-500">
+                Archived Clients: {loading ? "..." : archivedClients}
+              </p>
+
               <button
-                onClick={() => setActive("Clients")}
+                onClick={() => {
+                  setActive("Clients");
+                  setShowArchived(false);
+                }}
                 className="mt-5 rounded-lg bg-blue-600 px-5 py-3 text-sm text-white hover:bg-blue-700"
               >
                 Manage Clients →
@@ -606,26 +721,68 @@ export default function Home() {
 
           <section className="rounded-xl border bg-white p-5 shadow-sm md:p-6">
 
+            {/* CLIENT HEADER */}
+
             <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row">
 
               <div>
                 <h3 className="text-lg font-bold">
-                  All Clients
+                  {showArchived ? "Archived Clients" : "All Clients"}
                 </h3>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Manage your client information.
+                  {showArchived
+                    ? "View and restore archived clients."
+                    : "Manage your client information."}
                 </p>
               </div>
 
-              {!roleLoading && isWorkspaceAdmin && (
+              <div className="flex flex-wrap gap-2">
+
                 <button
-                  onClick={addClient}
-                  className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
+                  onClick={() => {
+                    setShowArchived(false);
+                    setSearch("");
+                    setShowForm(false);
+                    setError("");
+                  }}
+                  className={`rounded-lg px-4 py-3 text-sm ${
+                    !showArchived
+                      ? "bg-blue-600 text-white"
+                      : "border text-gray-600 hover:bg-gray-50"
+                  }`}
                 >
-                  + Add Client
+                  Active Clients
                 </button>
-              )}
+
+                <button
+                  onClick={() => {
+                    setShowArchived(true);
+                    setSearch("");
+                    setShowForm(false);
+                    setError("");
+                  }}
+                  className={`rounded-lg px-4 py-3 text-sm ${
+                    showArchived
+                      ? "bg-blue-600 text-white"
+                      : "border text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  Archived ({archivedClients})
+                </button>
+
+                {!roleLoading &&
+                  isWorkspaceAdmin &&
+                  !showArchived && (
+                    <button
+                      onClick={addClient}
+                      className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
+                    >
+                      + Add Client
+                    </button>
+                  )}
+
+              </div>
 
             </div>
 
@@ -635,6 +792,8 @@ export default function Home() {
               </div>
             )}
 
+            {/* SEARCH */}
+
             <input
               type="text"
               placeholder="Search by name, email or project..."
@@ -643,7 +802,9 @@ export default function Home() {
               className="mb-6 w-full rounded-lg border px-4 py-3 text-sm outline-none focus:border-blue-500"
             />
 
-            {showForm && isWorkspaceAdmin && (
+            {/* CLIENT FORM */}
+
+            {showForm && isWorkspaceAdmin && !showArchived && (
 
               <form
                 onSubmit={saveClient}
@@ -746,9 +907,11 @@ export default function Home() {
 
             )}
 
+            {/* CLIENT TABLE */}
+
             <div className="overflow-x-auto">
 
-              <table className="w-full min-w-[650px] text-left">
+              <table className="w-full min-w-[700px] text-left">
 
                 <thead>
 
@@ -759,7 +922,7 @@ export default function Home() {
                     <th className="p-4">PROJECT</th>
                     <th className="p-4">STATUS</th>
 
-                    {isWorkspaceAdmin && (
+                    {!roleLoading && isWorkspaceAdmin && (
                       <th className="p-4">ACTIONS</th>
                     )}
 
@@ -818,27 +981,44 @@ export default function Home() {
                         </td>
 
                         {isWorkspaceAdmin && (
+
                           <td className="p-4">
 
                             <div className="flex gap-3">
 
-                              <button
-                                onClick={() => editClient(client)}
-                                className="text-sm text-blue-600 hover:underline"
-                              >
-                                Edit
-                              </button>
+                              {showArchived ? (
 
-                              <button
-                                onClick={() => deleteClient(client.id)}
-                                className="text-sm text-red-600 hover:underline"
-                              >
-                                Delete
-                              </button>
+                                <button
+                                  onClick={() => restoreClient(client)}
+                                  className="text-sm font-medium text-green-600 hover:underline"
+                                >
+                                  Restore
+                                </button>
+
+                              ) : (
+
+                                <>
+                                  <button
+                                    onClick={() => editClient(client)}
+                                    className="text-sm text-blue-600 hover:underline"
+                                  >
+                                    Edit
+                                  </button>
+
+                                  <button
+                                    onClick={() => archiveClient(client)}
+                                    className="text-sm text-orange-600 hover:underline"
+                                  >
+                                    Archive
+                                  </button>
+                                </>
+
+                              )}
 
                             </div>
 
                           </td>
+
                         )}
 
                       </tr>
@@ -851,18 +1031,22 @@ export default function Home() {
 
               </table>
 
-              {!loading && !roleLoading && filteredClients.length === 0 && (
+              {!loading &&
+                !roleLoading &&
+                filteredClients.length === 0 && (
 
-                <p className="py-10 text-center text-sm text-gray-500">
-                  No clients found.
-                </p>
+                  <p className="py-10 text-center text-sm text-gray-500">
+                    {showArchived
+                      ? "No archived clients found."
+                      : "No clients found."}
+                  </p>
 
-              )}
+                )}
 
             </div>
 
             <div className="mt-5 text-sm text-gray-500">
-              Showing {filteredClients.length} of {clients.length} clients
+              Showing {filteredClients.length} of {visibleClients.length} clients
             </div>
 
           </section>
@@ -871,7 +1055,13 @@ export default function Home() {
 
         {/* PROJECTS MODULE */}
 
-        {active === "Projects" && <ProjectsManager />}
+        {active === "Projects" && (
+          <ProjectsManager
+            canManage={isWorkspaceAdmin}
+            canDelete={isWorkspaceOwner}
+            roleLoading={roleLoading}
+          />
+        )}
 
         {/* LEADS MODULE */}
 

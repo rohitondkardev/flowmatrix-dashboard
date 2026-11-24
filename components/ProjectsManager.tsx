@@ -20,6 +20,12 @@ type Project = {
   clientName: string;
 };
 
+type ProjectsManagerProps = {
+  canManage: boolean;
+  canDelete: boolean;
+  roleLoading: boolean;
+};
+
 const WORKSPACE_ID = "4548e6ca-9cb5-444f-8250-18fc155d935e";
 
 const emptyForm = {
@@ -38,7 +44,11 @@ function formatStatus(status: string | null): ProjectStatus {
   return "Active";
 }
 
-export default function ProjectsManager() {
+export default function ProjectsManager({
+  canManage,
+  canDelete,
+  roleLoading,
+}: ProjectsManagerProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [form, setForm] = useState(emptyForm);
@@ -113,6 +123,8 @@ export default function ProjectsManager() {
   }, []);
 
   function openAddForm() {
+    if (!canManage || roleLoading) return;
+
     setEditId(null);
     setForm({
       ...emptyForm,
@@ -123,6 +135,8 @@ export default function ProjectsManager() {
   }
 
   function openEditForm(project: Project) {
+    if (!canManage || roleLoading) return;
+
     setEditId(project.id);
 
     setForm({
@@ -146,12 +160,29 @@ export default function ProjectsManager() {
   async function saveProject(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    if (!canManage || roleLoading) {
+      setError("You do not have permission to manage projects.");
+      return;
+    }
+
     setSaving(true);
     setError("");
 
     try {
       if (!form.client_id) {
         throw new Error("Please select a client.");
+      }
+
+      if (!form.name.trim()) {
+        throw new Error("Project name is required.");
+      }
+
+      const validClient = clients.some(
+        (client) => client.id === form.client_id
+      );
+
+      if (!validClient) {
+        throw new Error("Invalid client selected.");
       }
 
       const payload = {
@@ -191,6 +222,11 @@ export default function ProjectsManager() {
   }
 
   async function deleteProject(project: Project) {
+    if (!canDelete || roleLoading) {
+      setError("Only the workspace owner can delete projects.");
+      return;
+    }
+
     const confirmed = window.confirm(
       `Are you sure you want to delete "${project.name}"?`
     );
@@ -247,7 +283,6 @@ export default function ProjectsManager() {
 
   return (
     <section className="rounded-xl border bg-white p-5 shadow-sm md:p-6">
-
       {/* HEADER */}
 
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row">
@@ -259,14 +294,24 @@ export default function ProjectsManager() {
           </p>
         </div>
 
-        <button
-          onClick={openAddForm}
-          disabled={clients.length === 0}
-          className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          + Add Project
-        </button>
+        {!roleLoading && canManage && (
+          <button
+            onClick={openAddForm}
+            disabled={clients.length === 0}
+            className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            + Add Project
+          </button>
+        )}
       </div>
+
+      {/* VIEW ONLY MESSAGE */}
+
+      {!roleLoading && !canManage && (
+        <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
+          You have view-only access to project information.
+        </div>
+      )}
 
       {/* STATISTICS */}
 
@@ -306,7 +351,7 @@ export default function ProjectsManager() {
 
       {/* FORM */}
 
-      {showForm && (
+      {showForm && canManage && !roleLoading && (
         <form
           onSubmit={saveProject}
           className="mb-6 rounded-xl border bg-gray-50 p-5"
@@ -316,7 +361,6 @@ export default function ProjectsManager() {
           </h3>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
             <input
               required
               type="text"
@@ -369,7 +413,6 @@ export default function ProjectsManager() {
               }
               className="rounded-lg border p-3"
             />
-
           </div>
 
           <div className="mt-5 flex gap-3">
@@ -378,7 +421,11 @@ export default function ProjectsManager() {
               disabled={saving}
               className="rounded-lg bg-blue-600 px-5 py-3 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
             >
-              {saving ? "Saving..." : editId ? "Update Project" : "Save Project"}
+              {saving
+                ? "Saving..."
+                : editId
+                ? "Update Project"
+                : "Save Project"}
             </button>
 
             <button
@@ -397,21 +444,26 @@ export default function ProjectsManager() {
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[700px] text-left">
-
           <thead>
             <tr className="border-b text-xs text-gray-500">
               <th className="p-4">PROJECT</th>
               <th className="p-4">CLIENT</th>
               <th className="p-4">DESCRIPTION</th>
               <th className="p-4">STATUS</th>
-              <th className="p-4">ACTIONS</th>
+
+              {canManage && !roleLoading && (
+                <th className="p-4">ACTIONS</th>
+              )}
             </tr>
           </thead>
 
           <tbody>
-            {loading ? (
+            {loading || roleLoading ? (
               <tr>
-                <td colSpan={5} className="py-10 text-center text-sm text-gray-500">
+                <td
+                  colSpan={canManage ? 5 : 4}
+                  className="py-10 text-center text-sm text-gray-500"
+                >
                   Loading projects...
                 </td>
               </tr>
@@ -447,30 +499,34 @@ export default function ProjectsManager() {
                     </span>
                   </td>
 
-                  <td className="p-4">
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => openEditForm(project)}
-                        className="text-sm text-blue-600 hover:underline"
-                      >
-                        Edit
-                      </button>
+                  {canManage && !roleLoading && (
+                    <td className="p-4">
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => openEditForm(project)}
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          Edit
+                        </button>
 
-                      <button
-                        onClick={() => deleteProject(project)}
-                        className="text-sm text-red-600 hover:underline"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
+                        {canDelete && (
+                          <button
+                            onClick={() => deleteProject(project)}
+                            className="text-sm text-red-600 hover:underline"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))
             )}
           </tbody>
         </table>
 
-        {!loading && filteredProjects.length === 0 && (
+        {!loading && !roleLoading && filteredProjects.length === 0 && (
           <p className="py-10 text-center text-sm text-gray-500">
             No projects found.
           </p>
@@ -480,7 +536,6 @@ export default function ProjectsManager() {
       <div className="mt-5 text-sm text-gray-500">
         Showing {filteredProjects.length} of {projects.length} projects
       </div>
-
     </section>
   );
 }
