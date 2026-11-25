@@ -28,7 +28,7 @@ export default function AuthGuard({
         "/auth/callback",
       ];
 
-      if (!data.session && !publicPaths.includes(pathname)) {
+      if (!data.session && !publicPaths.includes(pathname.toLowerCase())) {
         router.replace("/login");
         return;
       }
