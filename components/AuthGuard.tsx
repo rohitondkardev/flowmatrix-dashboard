@@ -28,12 +28,14 @@ export default function AuthGuard({
         "/auth/callback",
       ];
 
-      if (!data.session && !publicPaths.includes(pathname.toLowerCase())) {
+      const currentPath = pathname.toLowerCase();
+
+      if (!data.session && !publicPaths.includes(currentPath)) {
         router.replace("/login");
         return;
       }
 
-      if (data.session && pathname === "/login") {
+      if (data.session && currentPath === "/login") {
         router.replace("/");
         return;
       }
@@ -63,7 +65,7 @@ export default function AuthGuard({
         </div>
       )}
 
-     {!checking && <div>{children}</div>}
+      {!checking && <div>{children}</div>}
     </>
   );
 }
