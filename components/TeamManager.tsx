@@ -8,6 +8,7 @@ const WORKSPACE_ID = "4548e6ca-9cb5-444f-8250-18fc155d935e";
 type TeamMember = {
   user_id: string;
   full_name: string | null;
+  email: string | null;
   role: string;
   joined_at: string | null;
 };
@@ -48,13 +49,12 @@ export default function TeamManager() {
       if (userError) throw userError;
       if (!user) throw new Error("Please log in to view your team.");
 
-      const { data: ownMembership, error: ownError } =
-        await supabase
-          .from("workspace_members")
-          .select("role")
-          .eq("workspace_id", WORKSPACE_ID)
-          .eq("user_id", user.id)
-          .maybeSingle();
+      const { data: ownMembership, error: ownError } = await supabase
+        .from("workspace_members")
+        .select("role")
+        .eq("workspace_id", WORKSPACE_ID)
+        .eq("user_id", user.id)
+        .maybeSingle();
 
       if (ownError) throw ownError;
 
@@ -74,7 +74,17 @@ export default function TeamManager() {
 
       if (teamError) throw teamError;
 
-      setMembers((data || []) as TeamMember[]);
+      const formattedMembers: TeamMember[] = (data || []).map(
+        (member: TeamMember) => ({
+          user_id: member.user_id,
+          full_name: member.full_name,
+          email: member.email,
+          role: member.role,
+          joined_at: member.joined_at,
+        })
+      );
+
+      setMembers(formattedMembers);
 
       if (owner) {
         const { data: inviteData, error: inviteError } =
@@ -123,15 +133,12 @@ export default function TeamManager() {
 
     try {
       const { data, error: inviteError } =
-        await supabase.functions.invoke(
-          "invite-workspace-member",
-          {
-            body: {
-              email,
-              role: inviteRole,
-            },
-          }
-        );
+        await supabase.functions.invoke("invite-workspace-member", {
+          body: {
+            email,
+            role: inviteRole,
+          },
+        });
 
       if (inviteError) {
         let errorMessage = inviteError.message;
@@ -141,12 +148,10 @@ export default function TeamManager() {
 
           if (response) {
             const errorData = await response.clone().json();
-
-            errorMessage =
-              errorData?.error || errorMessage;
+            errorMessage = errorData?.error || errorMessage;
           }
         } catch {
-          // Keep original error message
+          // Keep original error message.
         }
 
         throw new Error(errorMessage);
@@ -162,7 +167,6 @@ export default function TeamManager() {
 
       setInviteEmail("");
       setInviteRole("member");
-
       setSuccess(`Invitation sent to ${email}.`);
 
       await loadTeam();
@@ -303,14 +307,19 @@ export default function TeamManager() {
     return "bg-yellow-100 text-yellow-700";
   }
 
+  function displayEmail(email: string | null) {
+    if (!email || !email.includes("@")) {
+      return "Email not available";
+    }
+
+    return email;
+  }
+
   return (
     <section className="rounded-xl border bg-white p-5 shadow-sm md:p-6">
-
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h3 className="text-lg font-bold">
-            Team Management
-          </h3>
+          <h3 className="text-lg font-bold">Team Management</h3>
 
           <p className="mt-1 text-sm text-gray-500">
             Manage workspace members and their access roles.
@@ -338,11 +347,8 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* Invite Member */}
-
       {isOwner && (
         <div className="mb-7 rounded-xl border bg-slate-50 p-5">
-
           <h4 className="text-base font-semibold">
             Invite Team Member
           </h4>
@@ -355,7 +361,6 @@ export default function TeamManager() {
             onSubmit={sendInvitation}
             className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4"
           >
-
             <input
               type="email"
               required
@@ -381,25 +386,18 @@ export default function TeamManager() {
             >
               {sendingInvite ? "Sending..." : "Send Invitation"}
             </button>
-
           </form>
 
           <p className="mt-3 text-xs text-gray-500">
             Invitations are sent by email. The member joins after accepting the invitation.
           </p>
-
         </div>
       )}
 
-      {/* Statistics */}
-
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-
         <div className="rounded-lg bg-gray-50 p-4">
           <p className="text-sm text-gray-500">Total Members</p>
-          <p className="mt-2 text-2xl font-bold">
-            {members.length}
-          </p>
+          <p className="mt-2 text-2xl font-bold">{members.length}</p>
         </div>
 
         <div className="rounded-lg bg-gray-50 p-4">
@@ -415,7 +413,6 @@ export default function TeamManager() {
             {members.filter((m) => m.role === "member").length}
           </p>
         </div>
-
       </div>
 
       {!loading && !isOwner && (
@@ -424,16 +421,12 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* Team Members */}
-
       <div className="mb-3">
         <h4 className="font-semibold">Workspace Members</h4>
       </div>
 
       <div className="overflow-x-auto">
-
         <table className="w-full min-w-[650px] text-left">
-
           <thead>
             <tr className="border-b text-xs text-gray-500">
               <th className="p-4">TEAM MEMBER</th>
@@ -444,7 +437,6 @@ export default function TeamManager() {
           </thead>
 
           <tbody>
-
             {loading ? (
               <tr>
                 <td
@@ -465,19 +457,17 @@ export default function TeamManager() {
               </tr>
             ) : (
               members.map((member) => (
-
                 <tr
                   key={member.user_id}
                   className="border-b last:border-0 hover:bg-gray-50"
                 >
-
                   <td className="p-4">
                     <p className="text-sm font-medium">
                       {member.full_name || "Unnamed Member"}
                     </p>
 
-                    <p className="mt-1 text-xs text-gray-400">
-                      {member.user_id}
+                    <p className="mt-1 text-xs text-gray-500">
+                      {displayEmail(member.email)}
                     </p>
                   </td>
 
@@ -495,14 +485,12 @@ export default function TeamManager() {
 
                   {isOwner && (
                     <td className="p-4">
-
                       {member.role === "owner" ? (
                         <span className="text-xs text-gray-400">
                           Protected
                         </span>
                       ) : (
                         <div className="flex flex-col gap-2">
-
                           <select
                             value={member.role}
                             disabled={savingId === member.user_id}
@@ -522,37 +510,25 @@ export default function TeamManager() {
                           >
                             Remove Member
                           </button>
-
                         </div>
                       )}
-
                     </td>
                   )}
-
                 </tr>
-
               ))
             )}
-
           </tbody>
-
         </table>
-
       </div>
-
-      {/* Invitation History */}
 
       {isOwner && (
         <div className="mt-8">
-
           <h4 className="mb-3 font-semibold">
             Invitation History
           </h4>
 
           <div className="overflow-x-auto rounded-lg border">
-
             <table className="w-full min-w-[600px] text-left">
-
               <thead className="bg-gray-50">
                 <tr className="text-xs text-gray-500">
                   <th className="p-4">EMAIL</th>
@@ -563,27 +539,27 @@ export default function TeamManager() {
               </thead>
 
               <tbody>
-
                 {loading ? (
                   <tr>
-                    <td colSpan={4} className="p-6 text-center text-sm text-gray-500">
+                    <td
+                      colSpan={4}
+                      className="p-6 text-center text-sm text-gray-500"
+                    >
                       Loading invitations...
                     </td>
                   </tr>
                 ) : invitations.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="p-6 text-center text-sm text-gray-500">
+                    <td
+                      colSpan={4}
+                      className="p-6 text-center text-sm text-gray-500"
+                    >
                       No invitations found.
                     </td>
                   </tr>
                 ) : (
                   invitations.map((invitation) => (
-
-                    <tr
-                      key={invitation.id}
-                      className="border-t"
-                    >
-
+                    <tr key={invitation.id} className="border-t">
                       <td className="p-4 text-sm">
                         {invitation.invited_email}
                       </td>
@@ -603,25 +579,18 @@ export default function TeamManager() {
                       <td className="p-4 text-sm text-gray-500">
                         {formatDate(invitation.created_at)}
                       </td>
-
                     </tr>
-
                   ))
                 )}
-
               </tbody>
-
             </table>
-
           </div>
-
         </div>
       )}
 
       <div className="mt-5 text-sm text-gray-500">
         Showing {members.length} team members.
       </div>
-
     </section>
   );
 }
